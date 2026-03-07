@@ -13,6 +13,12 @@ PROTOCOL="tcp"
 USE_COLOR=1
 BACKEND=""
 
+RED=''
+GREEN=''
+YELLOW=''
+BLUE=''
+RESET=''
+
 have_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -31,17 +37,11 @@ supports_color() {
 
 setup_colors() {
   if [[ "$USE_COLOR" -eq 1 ]] && supports_color; then
-    RED='\033[31m'
-    GREEN='\033[32m'
-    YELLOW='\033[33m'
-    BLUE='\033[34m'
-    RESET='\033[0m'
-  else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    BLUE=''
-    RESET=''
+    RED=$'\033[31m'
+    GREEN=$'\033[32m'
+    YELLOW=$'\033[33m'
+    BLUE=$'\033[34m'
+    RESET=$'\033[0m'
   fi
 }
 
@@ -54,18 +54,20 @@ print_info() {
 }
 
 print_usage() {
-  cat <<USAGE
+  cat <<EOF
 Port Inspector - inspect listening ports and discover free ones
 
 Usage:
   $SCRIPT_NAME [global options] --list
   $SCRIPT_NAME [global options] --check <port>
   $SCRIPT_NAME [global options] --find-free <start_port> <end_port>
+  $SCRIPT_NAME [global options] --free <start_port> <end_port>
 
 Modes:
-  --list                     List listening sockets.
+  --list                     List listening TCP sockets.
   --check <port>             Exit 0 if port is free, 1 if busy.
   --find-free <start> <end>  Print first free port in inclusive range.
+  --free <start> <end>       Alias for --find-free.
 
 Global options:
   --protocol <proto>         Transport protocol to inspect (currently: tcp).
@@ -73,10 +75,10 @@ Global options:
   -h, --help                 Show this help text.
 
 Exit codes:
-  0  Success (including free port on --check)
-  1  Busy port on --check, or no free port in --find-free
+  0  Success
+  1  Busy port on --check, or no free port found
   2  Usage / environment error
-USAGE
+EOF
 }
 
 validate_protocol() {
@@ -91,15 +93,17 @@ validate_protocol() {
 }
 
 validate_port() {
-  local port="$1"
+  local raw_port="$1"
 
-  if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-    print_error "Invalid port '$port' (must be an integer)."
+  if ! [[ "$raw_port" =~ ^[0-9]+$ ]]; then
+    print_error "Invalid port '$raw_port' (must be an integer)."
     exit "$EXIT_USAGE"
   fi
 
+  local port=$((10#$raw_port))
+
   if (( port < 1 || port > 65535 )); then
-    print_error "Invalid port '$port' (must be in range 1..65535)."
+    print_error "Invalid port '$raw_port' (must be in range 1..65535)."
     exit "$EXIT_USAGE"
   fi
 }
@@ -132,7 +136,6 @@ choose_backend() {
 list_listeners() {
   case "$BACKEND" in
     ss)
-      # Show listening TCP sockets in numeric format.
       ss -lnt
       ;;
     lsof)
@@ -146,7 +149,8 @@ list_listeners() {
 }
 
 is_port_busy() {
-  local port="$1"
+  local raw_port="$1"
+  local port=$((10#$raw_port))
 
   case "$BACKEND" in
     ss)
@@ -176,12 +180,15 @@ check_port() {
 }
 
 find_first_free_port() {
-  local start_port="$1"
-  local end_port="$2"
-  local port
+  local start_raw="$1"
+  local end_raw="$2"
+  local start_port end_port port
 
-  validate_port "$start_port"
-  validate_port "$end_port"
+  validate_port "$start_raw"
+  validate_port "$end_raw"
+
+  start_port=$((10#$start_raw))
+  end_port=$((10#$end_raw))
 
   if (( start_port > end_port )); then
     print_error "Invalid range: start port ($start_port) is greater than end port ($end_port)."
@@ -256,24 +263,19 @@ parse_args() {
 }
 
 main() {
-  parse_args "$@"
   setup_colors
+  parse_args "$@"
   validate_protocol "$PROTOCOL"
+  choose_backend
 
   case "$MODE" in
     list)
-      choose_backend
       list_listeners
       ;;
     check)
-      validate_port "$PORT"
-      choose_backend
       check_port "$PORT"
       ;;
     find_free)
-      validate_port "$RANGE_START"
-      validate_port "$RANGE_END"
-      choose_backend
       find_first_free_port "$RANGE_START" "$RANGE_END"
       ;;
     *)
